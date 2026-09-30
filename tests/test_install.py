@@ -52,6 +52,36 @@ class ScheduleTests(unittest.TestCase):
         self.assertIn("<StartWhenAvailable>true</StartWhenAvailable>", xml)
         self.assertNotIn("api_token", xml)
 
+    def test_systemd_units_have_no_secret_slot(self) -> None:
+        service = schedule.systemd_service(
+            Path("/home/alex smith/venv/bin/python"),
+            Path("/home/alex smith/HabiticaQuestAccept/habitica_quest_accept.py"),
+            Path("/home/alex smith/HabiticaQuestAccept"),
+            Path("/home/alex smith/HabiticaQuestAccept/logs/scheduled-output.log"),
+            Path("/home/alex smith/HabiticaQuestAccept/logs/scheduled-error.log"),
+        )
+        timer = schedule.systemd_timer(8, 15)
+        self.assertIn("Type=oneshot", service)
+        self.assertIn('"/home/alex smith/venv/bin/python"', service)
+        self.assertIn("OnCalendar=*-*-* 08:15:00", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertNotIn("api_token", service + timer)
+        self.assertNotIn("x-api-key", service + timer)
+
+    def test_cron_line_is_marked_and_quoted(self) -> None:
+        line = schedule.cron_line(
+            Path("/usr/bin/python3"),
+            Path("/home/alex smith/habitica_quest_accept.py"),
+            Path("/home/alex smith"),
+            8,
+            5,
+            Path("/home/alex smith/logs/scheduled-output.log"),
+        )
+        self.assertTrue(line.startswith("5 8 * * * "))
+        self.assertIn("'/home/alex smith'", line)
+        self.assertIn(f"# {schedule.CRON_MARK}", line)
+        self.assertNotIn("api_token", line)
+
     def test_uuid_check(self) -> None:
         self.assertTrue(install.looks_like_uuid("12345678-90ab-416b-cdef-1234567890ab"))
         self.assertFalse(install.looks_like_uuid("not-a-token"))

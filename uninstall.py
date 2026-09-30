@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +48,41 @@ def remove_windows(dry_run: bool) -> None:
         print("No daily task was removed. It may already be gone.")
 
 
+def remove_linux(dry_run: bool) -> None:
+    """Remove a systemd user timer and any crontab line this tool added."""
+    unit_dir = schedule.systemd_user_dir()
+    names = [f"{schedule.SYSTEMD_UNIT}.timer", f"{schedule.SYSTEMD_UNIT}.service"]
+    print(f"Linux daily timer: {unit_dir / names[0]}")
+    if dry_run:
+        print("Dry run: systemd units and crontab not changed.")
+        return
+    if shutil.which("systemctl"):
+        subprocess.run(["systemctl", "--user", "disable", "--now", names[0]], check=False)
+        subprocess.run(["systemctl", "--user", "reset-failed", names[1]], check=False)
+    removed = False
+    for name in names:
+        path = unit_dir / name
+        if path.is_file():
+            path.unlink()
+            removed = True
+    if shutil.which("systemctl"):
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    if removed:
+        print("Removed the systemd daily job.")
+    if shutil.which("crontab"):
+        current = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        if current.returncode == 0 and schedule.CRON_MARK in current.stdout:
+            kept = [line for line in current.stdout.splitlines() if schedule.CRON_MARK not in line]
+            if kept:
+                subprocess.run(["crontab", "-"], input="\n".join(kept) + "\n", text=True, check=True)
+            else:
+                subprocess.run(["crontab", "-r"], check=False)
+            print("Removed the crontab daily job.")
+            removed = True
+    if not removed:
+        print("No daily job was found.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Remove the schedule. Optionally delete config.json."""
     parser = argparse.ArgumentParser(description="Remove the daily Habitica quest-accept job.")
@@ -59,8 +95,10 @@ def main(argv: list[str] | None = None) -> int:
         remove_windows(args.dry_run)
     elif sys.platform == "darwin":
         remove_macos(args.dry_run)
+    elif sys.platform == "linux":
+        remove_linux(args.dry_run)
     else:
-        print("The uninstaller supports macOS and Windows.")
+        print("The uninstaller supports macOS, Windows, and Linux.")
         return 1
 
     delete_config = args.delete_config

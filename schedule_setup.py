@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Build the once-a-day Mac launchd job and Windows Task Scheduler job.
+"""Build the once-a-day Mac, Windows, and Linux jobs.
 
 The generated job runs this folder's Python and does not contain the API token.
 """
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -13,6 +14,8 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parent
 LABEL = "com.habitica.quest-accept"
 TASK_NAME = "HabiticaQuestAccept"
+SYSTEMD_UNIT = "habitica-quest-accept"
+CRON_MARK = "HabiticaQuestAccept"
 DEFAULT_TIME = "08:00"
 
 
@@ -39,6 +42,66 @@ def venv_python(root: Path = ROOT) -> Path:
     if sys.platform == "win32":
         return root / ".venv" / "Scripts" / "python.exe"
     return root / ".venv" / "bin" / "python"
+
+
+def systemd_quote(path: Path) -> str:
+    """Quote a path for a systemd ExecStart or append: value."""
+    text = str(path)
+    if any(character in text for character in ' \t"\\'):
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return text
+
+
+def systemd_user_dir() -> Path:
+    """Where a Linux user keeps systemd units."""
+    return Path.home() / ".config" / "systemd" / "user"
+
+
+def systemd_service(
+    python_bin: Path,
+    script_path: Path,
+    workdir: Path,
+    log_out: Path,
+    log_err: Path,
+) -> str:
+    """Oneshot user service. The API token is not written here."""
+    return f"""[Unit]
+Description=Accept a pending Habitica party quest invitation
+
+[Service]
+Type=oneshot
+WorkingDirectory={systemd_quote(workdir)}
+ExecStart={systemd_quote(python_bin)} {systemd_quote(script_path)}
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:{systemd_quote(log_out)}
+StandardError=append:{systemd_quote(log_err)}
+"""
+
+
+def systemd_timer(hour: int, minute: int) -> str:
+    """Daily user timer. Persistent runs a missed day after boot."""
+    clock = format_time(hour, minute)
+    return f"""[Unit]
+Description=Daily Habitica quest accept
+
+[Timer]
+OnCalendar=*-*-* {clock}:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def cron_line(python_bin: Path, script_path: Path, workdir: Path, hour: int, minute: int, log_path: Path) -> str:
+    """One crontab entry. The mark lets uninstall remove only this job."""
+    return (
+        f"{minute} {hour} * * * "
+        f"cd {shlex.quote(str(workdir))} && "
+        f"{shlex.quote(str(python_bin))} {shlex.quote(str(script_path))} "
+        f">> {shlex.quote(str(log_path))} 2>&1 "
+        f"# {CRON_MARK}"
+    )
 
 
 def launchd_plist_path() -> Path:

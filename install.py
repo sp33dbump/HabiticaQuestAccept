@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Install the daily Habitica quest-accept job on macOS or Windows.
+"""Install the daily Habitica quest-accept job on macOS, Windows, or Linux.
 
 Interactive use asks for the User ID and API Token. Those values are written
-to config.json in this folder (mode 600 on macOS) and are not placed in the
-scheduled task.
+to config.json in this folder (mode 600 on macOS and Linux) and are not placed
+in the scheduled task.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import getpass
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -167,6 +168,84 @@ def install_macos(python_bin: Path, hour: int, minute: int, dry_run: bool) -> No
     subprocess.run(["launchctl", "bootstrap", domain, str(destination)], check=True)
 
 
+def linux_scheduler() -> str:
+    """Prefer a systemd user timer, then crontab."""
+    if sys.platform != "linux":
+        return "none"
+    if shutil.which("systemctl"):
+        probe = subprocess.run(
+            ["systemctl", "--user", "show-environment"],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return "systemd"
+    if shutil.which("crontab"):
+        return "cron"
+    return "none"
+
+
+def install_systemd(python_bin: Path, hour: int, minute: int, dry_run: bool, linger: bool = True) -> None:
+    """Write and enable a systemd user timer."""
+    logs = ROOT / "logs"
+    unit_dir = schedule.systemd_user_dir()
+    service_path = unit_dir / f"{schedule.SYSTEMD_UNIT}.service"
+    timer_path = unit_dir / f"{schedule.SYSTEMD_UNIT}.timer"
+    service = schedule.systemd_service(
+        python_bin,
+        SCRIPT_PATH,
+        ROOT,
+        logs / "scheduled-output.log",
+        logs / "scheduled-error.log",
+    )
+    timer = schedule.systemd_timer(hour, minute)
+    print(f"Linux daily timer: {timer_path}")
+    print(f"Runs at {schedule.format_time(hour, minute)} local time.")
+    if dry_run:
+        print("Dry run: systemd units not written.")
+        return
+    logs.mkdir(parents=True, exist_ok=True)
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    service_path.write_text(service, encoding="utf-8")
+    timer_path.write_text(timer, encoding="utf-8")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", timer_path.name], check=True)
+    if linger:
+        linger_result = subprocess.run(["loginctl", "enable-linger", str(os.getuid())], check=False)
+        if linger_result.returncode != 0:
+            print("The daily job is installed for this login. To keep it after logout, run:")
+            print(f"  sudo loginctl enable-linger {os.environ.get('USER', os.getuid())}")
+
+
+def install_cron(python_bin: Path, hour: int, minute: int, dry_run: bool) -> None:
+    """Install one user crontab line when systemd --user is unavailable."""
+    log_path = ROOT / "logs" / "scheduled-output.log"
+    line = schedule.cron_line(python_bin, SCRIPT_PATH, ROOT, hour, minute, log_path)
+    print("Linux daily job: crontab")
+    print(f"Runs at {schedule.format_time(hour, minute)} local time.")
+    if dry_run:
+        print("Dry run: crontab not changed.")
+        return
+    (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+    current = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    existing = [] if current.returncode != 0 else current.stdout.splitlines()
+    kept = [item for item in existing if schedule.CRON_MARK not in item]
+    kept.append(line)
+    subprocess.run(["crontab", "-"], input="\n".join(kept) + "\n", text=True, check=True)
+
+
+def install_linux(python_bin: Path, hour: int, minute: int, dry_run: bool, linger: bool = True) -> None:
+    """Schedule the daily run with systemd or crontab."""
+    kind = linux_scheduler()
+    if kind == "systemd":
+        install_systemd(python_bin, hour, minute, dry_run, linger=linger)
+        return
+    if kind == "cron":
+        install_cron(python_bin, hour, minute, dry_run)
+        return
+    raise OSError("Linux needs systemd --user or crontab to schedule the daily run.")
+
+
 def install_windows(hour: int, minute: int, dry_run: bool) -> None:
     """Register a current-user daily task that runs run_daily.bat."""
     xml_text = schedule.windows_task_xml(ROOT / "run_daily.bat", ROOT, hour, minute)
@@ -213,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Python 3.9 or newer is required.")
         print("Windows: https://www.python.org/downloads/windows/")
         print("Mac: https://www.python.org/downloads/macos/")
+        print("Linux: install python3 from your distribution, or use https://www.python.org/downloads/")
         return 1
     print(f"Python: {python_name}")
 
@@ -226,8 +306,10 @@ def main(argv: list[str] | None = None) -> int:
             install_windows(hour, minute, dry_run=True)
         elif sys.platform == "darwin":
             install_macos(Path(python_name), hour, minute, dry_run=True)
+        elif sys.platform == "linux":
+            install_linux(Path(python_name), hour, minute, dry_run=True)
         else:
-            print("The daily job installer supports macOS and Windows.")
+            print("The daily job installer supports macOS, Windows, and Linux.")
             return 1
         print(f"Log file after a real run: {ROOT / 'logs' / 'quest-accept.log'}")
         return 0
@@ -247,8 +329,10 @@ def main(argv: list[str] | None = None) -> int:
             install_windows(hour, minute, dry_run=False)
         elif sys.platform == "darwin":
             install_macos(python_bin, hour, minute, dry_run=False)
+        elif sys.platform == "linux":
+            install_linux(python_bin, hour, minute, dry_run=False)
         else:
-            print("The daily job installer supports macOS and Windows. Credentials were saved; schedule it yourself.")
+            print("The daily job installer supports macOS, Windows, and Linux. Credentials were saved; schedule it yourself.")
             return 1
     except (OSError, subprocess.CalledProcessError) as exc:
         print(f"Could not install the daily job: {exc}")

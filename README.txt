@@ -23,6 +23,11 @@ You need
 
    Windows: https://www.python.org/downloads/windows/
    Mac:     https://www.python.org/downloads/macos/
+   Linux:   use your distribution's python3, or
+            https://www.python.org/downloads/
+
+   Debian or Ubuntu: sudo apt install python3
+   Fedora: sudo dnf install python3
 
    On the Windows installer, turn on "Add python.exe to PATH"
    before you click Install.
@@ -84,6 +89,10 @@ Install (about two minutes)
 
    Windows: double-click install.bat.
 
+   Linux: open a terminal in this folder and run:
+
+     bash install.sh
+
 3. The window asks for your User ID, then your API Token. The token
    will not appear as you paste it. Paste it anyway, then press Enter.
 
@@ -102,6 +111,7 @@ Check that it worked
 
 Mac: double-click run_now.command
 Windows: double-click run_now.bat
+Linux: bash run_now.sh
 
 A line that says OK means the program reached Habitica.
 
@@ -114,7 +124,7 @@ A line that says OK means the program reached Habitica.
 The same lines are saved in this folder:
 
   logs\quest-accept.log        on Windows
-  logs/quest-accept.log        on Mac
+  logs/quest-accept.log        on Mac and Linux
 
 
 Run it from a command window
@@ -130,10 +140,14 @@ folder onto the window, then press Enter. Then type:
 
   py -3 install.py
 
+Linux: open a terminal in this folder and run:
+
+  bash install.sh
+
 To look without accepting:
 
-  Mac:     .venv/bin/python habitica_quest_accept.py --check
-  Windows: .venv\Scripts\python.exe habitica_quest_accept.py --check
+  Mac and Linux: .venv/bin/python habitica_quest_accept.py --check
+  Windows:       .venv\Scripts\python.exe habitica_quest_accept.py --check
 
 Before the installer has created .venv, use python3 or py -3 in place
 of that .venv path.
@@ -151,6 +165,15 @@ Uninstall
 
 Mac: double-click uninstall.command
 Windows: double-click uninstall.bat
+Linux: bash uninstall.sh
+
+On Linux the daily run is a systemd timer for your user. If you log out
+and the computer stays on, the timer keeps running after:
+
+  sudo loginctl enable-linger "$USER"
+
+When systemd is not available for your user, the installer uses crontab
+instead.
 
 That removes the daily run. It asks before it deletes the saved token.
 Your Habitica account is unchanged.
